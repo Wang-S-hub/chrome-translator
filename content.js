@@ -12,9 +12,12 @@ const SKIP_TAGS = new Set([
   'IFRAME', 'CANVAS', 'AUDIO', 'VIDEO', 'OBJECT', 'EMBED',
 ]);
 const SKIP_ATTRS = ['data-translated', 'translate', 'notranslate'];
-const BATCH_SIZE = 20;      // 每批文本数
-const DEBOUNCE_MS = 600;    // DOM 变化防抖
-const VIEWPORT_MARGIN = 300; // 视口扩展边距（px），提前翻译即将可见内容
+const BATCH_SIZE = 20;
+const DEBOUNCE_MS = 600;
+const VIEWPORT_MARGIN = 300;
+
+// 用 WeakSet 跟踪已翻译的 text node（解决同 parent 多 child 问题）
+const translatedNodes = new WeakSet();
 
 // ---------- 安全通信（带重试，应对 Service Worker 休眠后唤醒）----------
 
@@ -53,7 +56,6 @@ let settings = {
 let observer = null;
 let pendingTimer = null;
 let isTranslating = false;
-let translateQueue = [];
 let totalProcessed = 0;
 let totalToProcess = 0;
 
@@ -152,9 +154,10 @@ function isTranslatableNode(node) {
   const parent = node.parentElement;
 
   if (SKIP_TAGS.has(parent.tagName)) return false;
-  if (parent.hasAttribute(TRANSLATED_ATTR)) return false;
 
-  // 内容为空的跳过
+  // 已翻译过的 text node 跳过（WeakSet 追踪，比 parent attr 更精确）
+  if (translatedNodes.has(node)) return false;
+
   const text = node.nodeValue?.trim();
   if (!text) return false;
 
@@ -266,20 +269,23 @@ async function translateAll() {
 }
 
 function applyTranslations(nodes, originals, translations) {
-  const fragment = document.createDocumentFragment(); // 未使用但保留用于未来批量 DOM 更新
-
   nodes.forEach((node, i) => {
     const translation = translations[i];
-    if (!translation) return; // null = 保留原文
+    if (!translation) return;
 
     const original = originals[i];
     if (!original || original === translation) return;
 
-    // 节点可能在异步翻译期间被修改
-    if (node.nodeValue?.trim() !== original) return;
+    // 防御：节点可能在异步翻译期间脱离 DOM
+    if (!node.parentNode || !node.parentElement) return;
+
+    // 防御：文本已被其他代码修改
+    if (node.nodeValue && node.nodeValue.trim() !== original) return;
 
     node.nodeValue = translation;
     node.parentElement.setAttribute(TRANSLATED_ATTR, original);
+    // 标记 text node 本身已翻译（解决同 parent 多 child 问题）
+    translatedNodes.add(node);
   });
 }
 
@@ -348,12 +354,18 @@ async function translateNewContent() {
 function removeAllTranslations() {
   const nodes = document.querySelectorAll(`[${TRANSLATED_ATTR}]`);
   for (const node of nodes) {
-    const original = node.getAttribute(TRANSLATED_ATTR);
-    if (original !== null && node.textContent !== original) {
-      node.textContent = original;
+    try {
+      const original = node.getAttribute(TRANSLATED_ATTR);
+      if (original !== null && node.textContent !== original) {
+        node.textContent = original;
+      }
+      node.removeAttribute(TRANSLATED_ATTR);
+    } catch (e) {
+      // 个别节点失败不影响其他
     }
-    node.removeAttribute(TRANSLATED_ATTR);
   }
+  // WeakSet 不能遍历，但节点 DOM 属性已清除，下次收集会重新通过
+  // 已脱离 DOM 的节点 WeakSet 会自动回收
 }
 
 // ---------- 消息处理 ----------

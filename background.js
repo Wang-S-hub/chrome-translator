@@ -146,7 +146,7 @@ function buildOpenAIRequest(texts, targetLang, sourceLang, style) {
       { role: 'user', content: numbered },
     ],
     temperature: 0.8,
-    max_tokens: 2000,
+    max_tokens: 4096,
   };
 }
 
@@ -173,14 +173,40 @@ function parseNumberedOutput(content) {
 // ---------- 翻译缓存 ----------
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
-const translationCache = new Map();
+const CACHE_MAX = 5000;
+let translationCache = new Map();
+
+// SW 启动时从 storage 恢复缓存
+(async function restoreCache() {
+  try {
+    const stored = await chrome.storage.local.get('translationCache');
+    if (stored.translationCache && Array.isArray(stored.translationCache)) {
+      const now = Date.now();
+      for (const [key, val] of stored.translationCache) {
+        if (now - val.ts < CACHE_TTL_MS) {
+          translationCache.set(key, val);
+        }
+      }
+      if (translationCache.size > 0) {
+        console.log('[自然翻译] 从 storage 恢复', translationCache.size, '条缓存');
+      }
+    }
+  } catch (e) { /* 忽略 */ }
+})();
+
+// 每隔 5 分钟将缓存落地到 storage
+setInterval(async function () {
+  try {
+    const arr = [...translationCache].slice(0, CACHE_MAX);
+    await chrome.storage.local.set({ translationCache: arr });
+  } catch (e) { /* 忽略 */ }
+}, 5 * 60 * 1000);
 
 function makeCacheKey(text, targetLang, style) {
-  return `${text}|${targetLang}|${style}`;
+  return text + '|' + targetLang + '|' + style;
 }
 
 function queryCache(texts, targetLang, style) {
-  // cached[i] = 译文（命中） 或 undefined（未命中）
   const cached = [];
   const missedTexts = [];
   const missedIndices = [];
@@ -205,17 +231,17 @@ function writeCache(texts, translations, targetLang, style) {
       translationCache.set(makeCacheKey(texts[i], targetLang, style), { val: translations[i], ts: now });
     }
   }
-  // 超过 5000 条时淘汰最旧的
-  if (translationCache.size > 5000) {
+  if (translationCache.size > CACHE_MAX) {
     const sorted = [...translationCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
-    for (let i = 0; i < sorted.length - 5000; i++) {
+    for (let i = 0; i < sorted.length - CACHE_MAX; i++) {
       translationCache.delete(sorted[i][0]);
     }
   }
 }
 
-function clearCache() {
+async function clearCache() {
   translationCache.clear();
+  try { await chrome.storage.local.remove('translationCache'); } catch (e) { /* 忽略 */ }
 }
 
 // ---------- 通用翻译调用 ----------
@@ -229,11 +255,15 @@ async function callEngine(engineId, texts, targetLang, sourceLang, apiKey, style
 
   try {
     const startTime = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30s 超时
     const res = await fetch(engine.url, {
       method: 'POST',
       headers: engine.headers(apiKey),
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     const latency = Date.now() - startTime;
 
     if (!res.ok) {
@@ -268,7 +298,11 @@ async function callEngine(engineId, texts, targetLang, sourceLang, apiKey, style
       },
     };
   } catch (e) {
-    console.error(`[自然翻译] ${engine.name} 网络错误:`, e);
+    if (e.name === 'AbortError') {
+      console.error(`[自然翻译] ${engine.name} 请求超时`);
+      return { success: false, error: '请求超时（30s）' };
+    }
+    console.error(`[自然翻译] ${engine.name} 网络错误:`, e.message);
     return { success: false, error: `网络错误: ${e.message}` };
   }
 }
