@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "自然翻译 - Natural Page Translator",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "AI 驱动的整页实时翻译插件，使用 DeepSeek/OpenAI/智谱/Moonshot/通义千问等大模型，结果自然口语化。",
   "permissions": [
     "storage",

@@ -170,6 +170,54 @@ function parseNumberedOutput(content) {
   return resultMap;
 }
 
+// ---------- 翻译缓存 ----------
+
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
+const translationCache = new Map();
+
+function makeCacheKey(text, targetLang, style) {
+  return `${text}|${targetLang}|${style}`;
+}
+
+function queryCache(texts, targetLang, style) {
+  // cached[i] = 译文（命中） 或 undefined（未命中）
+  const cached = [];
+  const missedTexts = [];
+  const missedIndices = [];
+  const now = Date.now();
+  for (let i = 0; i < texts.length; i++) {
+    const entry = translationCache.get(makeCacheKey(texts[i], targetLang, style));
+    if (entry && (now - entry.ts) < CACHE_TTL_MS) {
+      cached[i] = entry.val;
+    } else {
+      cached[i] = undefined;
+      missedTexts.push(texts[i]);
+      missedIndices.push(i);
+    }
+  }
+  return { cached, missedTexts, missedIndices };
+}
+
+function writeCache(texts, translations, targetLang, style) {
+  const now = Date.now();
+  for (let i = 0; i < texts.length; i++) {
+    if (translations[i]) {
+      translationCache.set(makeCacheKey(texts[i], targetLang, style), { val: translations[i], ts: now });
+    }
+  }
+  // 超过 5000 条时淘汰最旧的
+  if (translationCache.size > 5000) {
+    const sorted = [...translationCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    for (let i = 0; i < sorted.length - 5000; i++) {
+      translationCache.delete(sorted[i][0]);
+    }
+  }
+}
+
+function clearCache() {
+  translationCache.clear();
+}
+
 // ---------- 通用翻译调用 ----------
 
 async function callEngine(engineId, texts, targetLang, sourceLang, apiKey, style) {
@@ -287,6 +335,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getUsageStats().then(stats => sendResponse({ success: true, stats }));
     return true;
   }
+  if (message.type === 'CLEAR_PAGE_CACHE') {
+    clearCache();
+    sendResponse({ success: true });
+    return false;
+  }
   return false;
 });
 
@@ -298,13 +351,64 @@ async function handleTranslate({ texts, targetLang, sourceLang, engine, apiKey, 
     return { success: false, error: `未知引擎: ${engine}` };
   }
 
-  const result = await callEngine(engine, texts, targetLang, sourceLang, apiKey, style);
+  // 过滤空文本
+  const validTexts = [];
+  const validIndices = [];
+  for (let i = 0; i < texts.length; i++) {
+    const t = (texts[i] || '').trim();
+    if (t.length > 0) {
+      validTexts.push(t);
+      validIndices.push(i);
+    }
+  }
+
+  const results = new Array(texts.length).fill(null);
+  if (validTexts.length === 0) {
+    return { success: true, translations: results, usage: null };
+  }
+
+  // 1. 查缓存
+  const { cached, missedTexts, missedIndices } = queryCache(validTexts, targetLang, style);
+
+  // 2. 全部命中 → 直接返回
+  if (missedTexts.length === 0) {
+    for (let j = 0; j < validTexts.length; j++) {
+      results[validIndices[j]] = cached[j] || null;
+    }
+    return { success: true, translations: results, usage: null, fromCache: true };
+  }
+
+  // 3. 只对未命中的调 API
+  const result = await callEngine(engine, missedTexts, targetLang, sourceLang, apiKey, style);
 
   if (result && result.success && result.usage) {
     await recordUsage(engine, result.usage);
   }
 
-  return result;
+  // 4. 写入缓存
+  if (result && result.success && result.translations) {
+    writeCache(missedTexts, result.translations, targetLang, style);
+  }
+
+  // 5. 合并返回
+  for (let j = 0; j < validTexts.length; j++) {
+    if (cached[j] !== undefined) {
+      results[validIndices[j]] = cached[j];
+    }
+  }
+  for (let k = 0; k < missedIndices.length; k++) {
+    const j = missedIndices[k];
+    results[validIndices[j]] = (result && result.success && result.translations)
+      ? result.translations[k]
+      : null;
+  }
+
+  return {
+    success: result ? result.success : false,
+    translations: results,
+    usage: result ? result.usage : null,
+    fromCache: missedTexts.length < validTexts.length,
+  };
 }
 
 async function handleTestTranslate({ engine, text, targetLang, sourceLang, apiKey, style }) {

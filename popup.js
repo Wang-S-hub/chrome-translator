@@ -377,7 +377,8 @@ btnApply.addEventListener('click', async () => {
 
   await saveSettings();
 
-  // 通知页面重新翻译（设置已更新）
+  // 先清缓存，再通知页面重新翻译
+  chrome.runtime.sendMessage({ type: 'CLEAR_PAGE_CACHE' }).catch(() => {});
   await notifyContent('SETTINGS_UPDATED', {
     changes: {
       enabled: currentSettings.enabled,
@@ -397,6 +398,7 @@ btnRetranslate.addEventListener('click', async () => {
   currentSettings.apiKey = apiKeyInput.value.trim();
   engineKeys[currentSettings.engine] = currentSettings.apiKey;
   await saveSettings();
+  chrome.runtime.sendMessage({ type: 'CLEAR_PAGE_CACHE' }).catch(() => {});
   await notifyContent('RETRANSLATE');
 
   btnRetranslate.textContent = '🔄 翻译中…';

@@ -16,6 +16,29 @@ const BATCH_SIZE = 20;      // 每批文本数
 const DEBOUNCE_MS = 600;    // DOM 变化防抖
 const VIEWPORT_MARGIN = 300; // 视口扩展边距（px），提前翻译即将可见内容
 
+// ---------- 安全通信（带重试，应对 Service Worker 休眠后唤醒）----------
+
+function sendToBackground(msg) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(msg, (response) => {
+      if (chrome.runtime.lastError) {
+        // SW 可能刚被 Chrome 唤醒，300ms 后再试一次
+        setTimeout(() => {
+          chrome.runtime.sendMessage(msg, (retryResp) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(retryResp || null);
+            }
+          });
+        }, 300);
+      } else {
+        resolve(response || null);
+      }
+    });
+  });
+}
+
 // ---------- 全局状态 ----------
 
 let settings = {
@@ -213,7 +236,7 @@ async function translateAll() {
     const texts = batch.map(n => n.nodeValue.trim());
 
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await sendToBackground({
         type: 'TRANSLATE',
         texts,
         targetLang: settings.targetLang,
@@ -228,7 +251,7 @@ async function translateAll() {
       }
       // 失败降级：保留原文不修改
     } catch (e) {
-      console.error('[自然翻译] 通信错误:', e);
+      // Service Worker 休眠是 Manifest V3 的正常行为，静默忽略
     }
 
     totalProcessed += batch.length;
@@ -344,12 +367,27 @@ chrome.runtime.onMessage.addListener((msg) => {
       removeAllTranslations();
     }
   } else if (msg.type === 'RETRANSLATE') {
+    // 用户主动重新翻译：清理缓存 + 重新翻译
+    sendToBackground({ type: 'CLEAR_PAGE_CACHE' }).catch(() => {});
     removeAllTranslations();
     translateAll();
   } else if (msg.type === 'SETTINGS_UPDATED') {
-    // 引擎或设置变更：重新翻译
+    // 引擎或设置变更
     const changed = msg.changes || {};
+    const prev = {
+      targetLang: settings.targetLang,
+      style: settings.style,
+      engine: settings.engine,
+    };
     Object.assign(settings, changed);
+    // 语言/风格/引擎变了才清缓存，仅开关/Key 变更不清
+    if (
+      prev.targetLang !== settings.targetLang ||
+      prev.style !== settings.style ||
+      prev.engine !== settings.engine
+    ) {
+      sendToBackground({ type: 'CLEAR_PAGE_CACHE' }).catch(() => {});
+    }
     removeAllTranslations();
     translateAll();
   }
@@ -380,6 +418,7 @@ async function init() {
   // 监听存储变化
   chrome.storage.onChanged.addListener((changes) => {
     let shouldRetranslate = false;
+    let shouldClearCache = false;
     if (changes.enabled) {
       settings.enabled = changes.enabled.newValue;
       if (settings.enabled) {
@@ -390,13 +429,16 @@ async function init() {
         removeAllTranslations();
       }
     }
-    if (changes.targetLang) { settings.targetLang = changes.targetLang.newValue; shouldRetranslate = true; }
-    if (changes.sourceLang) { settings.sourceLang = changes.sourceLang.newValue; shouldRetranslate = true; }
-    if (changes.engine) { settings.engine = changes.engine.newValue; shouldRetranslate = true; }
-    if (changes.apiKey) { settings.apiKey = changes.apiKey.newValue; shouldRetranslate = true; }
-    if (changes.style) { settings.style = changes.style.newValue; shouldRetranslate = true; }
+    if (changes.targetLang) { settings.targetLang = changes.targetLang.newValue; shouldRetranslate = true; shouldClearCache = true; }
+    if (changes.sourceLang) { settings.sourceLang = changes.sourceLang.newValue; shouldRetranslate = true; shouldClearCache = true; }
+    if (changes.engine)    { settings.engine = changes.engine.newValue; shouldRetranslate = true; shouldClearCache = true; }
+    if (changes.style)     { settings.style = changes.style.newValue; shouldRetranslate = true; shouldClearCache = true; }
+    // 仅 API Key 变更不清缓存
 
     if (shouldRetranslate && settings.enabled && settings.apiKey) {
+      if (shouldClearCache) {
+        sendToBackground({ type: 'CLEAR_PAGE_CACHE' }).catch(() => {});
+      }
       removeAllTranslations();
       translateAll();
     }
