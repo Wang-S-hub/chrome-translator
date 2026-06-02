@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+
+    <!-- 头部 -->
+    <header class="header">
+      <div class="header-row">
+        <h1 class="title">🌐 自然翻译</h1>
+        <span class="version">v2.0</span>
+      </div>
+      <p class="subtitle">AI 大模型驱动 · 像本地人一样表达</p>
+    </header>
+
+    <!-- 总开关 -->
+    <div class="section toggle-section">
+      <div class="toggle-row">
+        <span class="label-lg">翻译状态</span>
+        <label class="switch">
+          <input type="checkbox" id="toggleEnabled" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="status-text" id="statusText">🟢 翻译已开启</p>
+    </div>
+
+    <hr>
+
+    <!-- 引擎选择 -->
+    <div class="section">
+      <label class="section-label">AI 翻译引擎</label>
+      <div class="engine-grid" id="engineGrid">
+        <!-- JS 动态生成 -->
+      </div>
+    </div>
+
+    <!-- API Key -->
+    <div class="section" id="apiKeySection">
+      <label class="section-label" for="apiKeyInput">
+        🔑 API Key
+        <span class="engine-name" id="engineNameLabel"></span>
+      </label>
+      <div class="input-row">
+        <input type="password" id="apiKeyInput" class="input" placeholder="粘贴 API Key…">
+        <button id="toggleKeyVis" class="icon-btn" title="显示">👁️</button>
+      </div>
+      <p class="hint" id="apiKeyHint"></p>
+    </div>
+
+    <hr>
+
+    <!-- 目标语言 -->
+    <div class="section">
+      <label class="section-label" for="targetLangSelect">目标语言</label>
+      <select id="targetLangSelect" class="select">
+        <option value="zh">🇨🇳 简体中文</option>
+        <option value="zh-TW">🇹🇼 繁体中文</option>
+        <option value="en">🇺🇸 English</option>
+        <option value="ja">🇯🇵 日本語</option>
+        <option value="ko">🇰🇷 한국어</option>
+        <option value="fr">🇫🇷 Français</option>
+        <option value="de">🇩🇪 Deutsch</option>
+        <option value="es">🇪🇸 Español</option>
+        <option value="pt">🇵🇹 Português</option>
+        <option value="ru">🇷🇺 Русский</option>
+        <option value="it">🇮🇹 Italiano</option>
+        <option value="ar">🇸🇦 العربية</option>
+        <option value="th">🇹🇭 ไทย</option>
+        <option value="vi">🇻🇳 Tiếng Việt</option>
+        <option value="id">🇮🇩 Bahasa Indonesia</option>
+        <option value="tr">🇹🇷 Türkçe</option>
+      </select>
+    </div>
+
+    <!-- 源语言 -->
+    <div class="section">
+      <label class="section-label" for="sourceLangSelect">源语言</label>
+      <select id="sourceLangSelect" class="select">
+        <option value="auto">🔍 自动检测</option>
+        <option value="en">🇺🇸 English</option>
+        <option value="zh">🇨🇳 中文</option>
+        <option value="ja">🇯🇵 日本語</option>
+        <option value="ko">🇰🇷 한국어</option>
+        <option value="fr">🇫🇷 Français</option>
+        <option value="de">🇩🇪 Deutsch</option>
+        <option value="es">🇪🇸 Español</option>
+      </select>
+    </div>
+
+    <hr>
+
+    <!-- 翻译风格 -->
+    <div class="section">
+      <label class="section-label">翻译风格</label>
+      <div class="style-group" id="styleGroup">
+        <label class="style-card">
+          <input type="radio" name="style" value="casual" checked hidden>
+          <span class="style-body">
+            <span class="style-icon">💬</span>
+            <span class="style-name">日常口语</span>
+            <span class="style-desc">像朋友聊天一样自然</span>
+          </span>
+        </label>
+        <label class="style-card">
+          <input type="radio" name="style" value="formal" hidden>
+          <span class="style-body">
+            <span class="style-icon">📄</span>
+            <span class="style-name">正式书面</span>
+            <span class="style-desc">规范严谨的书面表达</span>
+          </span>
+        </label>
+        <label class="style-card">
+          <input type="radio" name="style" value="humorous" hidden>
+          <span class="style-body">
+            <span class="style-icon">😄</span>
+            <span class="style-name">幽默调侃</span>
+            <span class="style-desc">俏皮话和梗，会心一笑</span>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="section btn-row">
+      <button id="btnApply" class="btn btn-primary">✅ 应用设置</button>
+      <button id="btnRetranslate" class="btn btn-secondary">🔄 重新翻译</button>
+    </div>
+
+    <hr>
+
+    <!-- 测试翻译 -->
+    <div class="section">
+      <label class="section-label">🧪 测试翻译效果</label>
+      <div class="test-row">
+        <input type="text" id="testInput" class="input" placeholder="输入一句话测试翻译…">
+        <button id="btnTest" class="btn btn-test">测试</button>
+      </div>
+      <div class="test-result" id="testResult" style="display:none;">
+        <div class="test-original" id="testOriginal"></div>
+        <div class="test-arrow">↓</div>
+        <div class="test-translated" id="testTranslated"></div>
+        <div class="test-meta" id="testMeta"></div>
+      </div>
+    </div>
+
+    <hr>
+
+    <!-- 用量统计 -->
+    <div class="section">
+      <div class="usage-header">
+        <span class="section-label">📊 用量统计</span>
+        <button id="btnRefreshUsage" class="btn-mini">刷新</button>
+      </div>
+      <div class="usage-grid" id="usageGrid">
+        <div class="usage-item">
+          <span class="usage-val" id="usageCalls">--</span>
+          <span class="usage-lbl">今日调用</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-val" id="usageTokens">--</span>
+          <span class="usage-lbl">Token 消耗</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-val" id="usageCost">--</span>
+          <span class="usage-lbl">预估费用</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+      引擎: DeepSeek · OpenAI · 智谱 · Moonshot · 通义千问
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
